@@ -1,4 +1,3 @@
-import colorsys
 import json
 import math
 import os
@@ -39,13 +38,28 @@ MENU_BG = (21, 24, 43)
 FAIL = (238, 70, 110)
 DONE = (128, 112, 255)
 
-# the colors you can change from the cog menu
-DEFAULT_COLORS = {
-    "standby": (27, 30, 52),    # the diamond while you wait
-    "go": (255, 196, 46),       # gold: CLICK this one
-    "decoy": (255, 134, 46),    # ember: never click this one
+# the only colors you can pick from the cog menu
+PALETTE = {
+    "RED": (238, 64, 64),
+    "GREEN": (46, 204, 113),
+    "BLUE": (52, 120, 246),
+    "YELLOW": (255, 204, 41),
 }
-colors = dict(DEFAULT_COLORS)   # the live values, the menu edits these
+STANDBY = (27, 30, 52)          # the diamond while you wait (fixed)
+
+DEFAULT_CHOICE = {"go": "YELLOW", "decoy": "RED"}
+choice = dict(DEFAULT_CHOICE)   # which palette color CLICK (go) and AVOID (decoy) use
+colors = {}                     # the actual RGB values the drawing code uses
+
+
+def apply_choice():
+    """Turn the picked color names into RGB values for drawing."""
+    colors["standby"] = STANDBY
+    colors["go"] = PALETTE[choice["go"]]
+    colors["decoy"] = PALETTE[choice["decoy"]]
+
+
+apply_choice()
 
 
 # ------------------------------------------------------------
@@ -59,23 +73,26 @@ def settings_path():
     return os.path.join(base, "react-chatter", "settings.json")
 
 
-def load_colors():
+def load_choice():
     try:
         with open(settings_path()) as f:
             saved = json.load(f)
     except (OSError, ValueError):
         return  # no file yet, or it's broken: just keep the defaults
-    for key in DEFAULT_COLORS:
-        value = saved.get(key)
-        if isinstance(value, list) and len(value) == 3 and all(isinstance(n, int) and 0 <= n <= 255 for n in value):
-            colors[key] = tuple(value)
+    if not isinstance(saved, dict):
+        return
+    go, decoy = saved.get("go"), saved.get("decoy")
+    # only accept two different colors from the palette (older versions saved RGB lists, those get ignored)
+    if isinstance(go, str) and isinstance(decoy, str) and go in PALETTE and decoy in PALETTE and go != decoy:
+        choice["go"], choice["decoy"] = go, decoy
+        apply_choice()
 
 
-def save_colors():
+def save_choice():
     try:
         os.makedirs(os.path.dirname(settings_path()), exist_ok=True)
         with open(settings_path(), "w") as f:
-            json.dump({key: list(value) for key, value in colors.items()}, f, indent=2)
+            json.dump(choice, f, indent=2)
     except OSError:
         pass  # can't save? the game still works, it just forgets on restart
 
@@ -185,16 +202,6 @@ def edge_for(c):
     return mix(c, (0, 0, 0), 0.3) if brightness(c) > 140 else mix(c, (255, 255, 255), 0.25)
 
 
-def rgb_to_hsv(c):
-    h, s, v = colorsys.rgb_to_hsv(c[0] / 255, c[1] / 255, c[2] / 255)
-    return [h * 360, s * 100, v * 100]
-
-
-def hsv_to_rgb(h, s, v):
-    r, g, b = colorsys.hsv_to_rgb(h / 360, s / 100, v / 100)
-    return (round(r * 255), round(g * 255), round(b * 255))
-
-
 # ------------------------------------------------------------
 # shape and text helpers
 # ------------------------------------------------------------
@@ -225,7 +232,7 @@ def make_window_icon():
     icon = pygame.Surface((64, 64), pygame.SRCALPHA)
     pygame.draw.rect(icon, BG, (0, 0, 64, 64), border_radius=12)
     pygame.draw.polygon(icon, LINE, diamond((32, 32), 27, 20), 2)
-    pygame.draw.polygon(icon, DEFAULT_COLORS["go"], diamond((32, 32), 22))
+    pygame.draw.polygon(icon, PALETTE[DEFAULT_CHOICE["go"]], diamond((32, 32), 22))
     return icon
 
 
@@ -379,50 +386,45 @@ def draw(screen, game, fonts, grid, now):
         if elapsed >= LOCKOUT:
             hint = "click to start over" if state == "fail" else "click to play again"
     else:
-        hint = "only click the CLICK color, the AVOID color sends you back to 0"
+        hint = f"only click {choice['go']}, {choice['decoy']} sends you back to 0"
     draw_text(screen, fonts["tiny"], hint, TEXT_DIM, (WIDTH // 2, 862))
 
 
 # ------------------------------------------------------------
 # color menu
 # ------------------------------------------------------------
-MENU_RECT = pygame.Rect(100, 100, 700, 680)
-SLOT_Y = 225
-SLOT_SIZE = 30
-SLOTS = (("standby", "STANDBY", 270), ("go", "CLICK", 450), ("decoy", "AVOID", 630))
-SLIDERS = (("HUE", 360, "°"), ("SATURATION", 100, "%"), ("BRIGHTNESS", 100, "%"))
-SLIDER_TRACKS = [pygame.Rect(290, y - 8, 380, 16) for y in (345, 400, 455)]
-PREVIEW_RECT = pygame.Rect(250, 535, 400, 125)
-DEFAULTS_BUTTON = pygame.Rect(230, 695, 200, 48)
-DONE_BUTTON = pygame.Rect(470, 695, 200, 48)
+MENU_RECT = pygame.Rect(100, 140, 700, 590)
+ROWS = (("go", "CLICK", 270), ("decoy", "AVOID", 400))     # slot, label, y position
+SWATCH_X = (350, 460, 570, 680)                            # one per palette color
+SWATCH_SIZE = 30
+PREVIEW_RECT = pygame.Rect(250, 485, 400, 125)
+DEFAULTS_BUTTON = pygame.Rect(230, 650, 200, 48)
+DONE_BUTTON = pygame.Rect(470, 650, 200, 48)
+
+
+def other_slot(slot):
+    return "decoy" if slot == "go" else "go"
+
+
+def swatch_at(pos):
+    """Which (slot, color name) diamond is under pos, or None."""
+    for slot, _, y in ROWS:
+        for name, x in zip(PALETTE, SWATCH_X):
+            if abs(pos[0] - x) + abs(pos[1] - y) <= SWATCH_SIZE + 6:   # inside the diamond
+                return slot, name
+    return None
 
 
 class Menu:
     def __init__(self):
         self.is_open = False
-        self.slot = "go"        # which color the sliders are editing
-        self.hsv = {}           # hue/saturation/brightness for each color
-        self.dragging = None    # index of the slider being dragged, or None
 
     def open(self):
         self.is_open = True
-        self.dragging = None
-        self.load_hsv()
 
     def close(self):
         self.is_open = False
-        save_colors()
-
-    def load_hsv(self):
-        # kept separately from the RGB colors so the hue slider doesn't jump
-        # around when saturation or brightness hits 0
-        self.hsv = {key: rgb_to_hsv(value) for key, value in colors.items()}
-
-    def set_from_mouse(self, x):
-        track = SLIDER_TRACKS[self.dragging]
-        t = min(1, max(0, (x - track.left) / track.width))
-        self.hsv[self.slot][self.dragging] = t * SLIDERS[self.dragging][1]
-        colors[self.slot] = hsv_to_rgb(*self.hsv[self.slot])
+        save_choice()
 
     def handle(self, event):
         """Returns "close" when the menu should close."""
@@ -434,41 +436,16 @@ class Menu:
             if over_cog(pos) or DONE_BUTTON.collidepoint(pos):
                 return "close"
             if DEFAULTS_BUTTON.collidepoint(pos):
-                colors.update(DEFAULT_COLORS)
-                self.load_hsv()
+                choice.update(DEFAULT_CHOICE)
+                apply_choice()
                 return None
-            for key, _, x in SLOTS:
-                if abs(pos[0] - x) + abs(pos[1] - SLOT_Y) <= SLOT_SIZE + 8:  # inside the diamond
-                    self.slot = key
-                    return None
-            for i, track in enumerate(SLIDER_TRACKS):
-                if track.inflate(24, 24).collidepoint(pos):
-                    self.dragging = i
-                    self.set_from_mouse(pos[0])
-                    return None
-
-        elif event.type == pygame.MOUSEMOTION and self.dragging is not None:
-            self.set_from_mouse(event.pos[0])
-
-        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-            self.dragging = None
-
+            hit = swatch_at(pos)
+            if hit:
+                slot, name = hit
+                if choice[other_slot(slot)] != name:    # can't use the same color for both
+                    choice[slot] = name
+                    apply_choice()
         return None
-
-
-def slider_gradient(index, h, s, v, size):
-    """The colored strip behind a slider, showing what each position would give you."""
-    strip = pygame.Surface((64, 1))
-    for x in range(64):
-        t = x / 63
-        if index == 0:
-            c = hsv_to_rgb(t * 360, 100, 100)
-        elif index == 1:
-            c = hsv_to_rgb(h, t * 100, v)
-        else:
-            c = hsv_to_rgb(h, s, t * 100)
-        strip.set_at((x, 0), c)
-    return pygame.transform.smoothscale(strip, size)
 
 
 def draw_button(screen, font, rect, label, mouse):
@@ -481,6 +458,7 @@ def draw_button(screen, font, rect, label, mouse):
 
 def draw_menu(screen, fonts, menu):
     mouse = pygame.mouse.get_pos()
+    hovered = swatch_at(mouse)
 
     # dim the game behind the menu
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -490,37 +468,35 @@ def draw_menu(screen, fonts, menu):
     panel = chamfer(MENU_RECT, 30)
     pygame.draw.polygon(screen, MENU_BG, panel)
     pygame.draw.polygon(screen, LINE, panel, 2)
-    draw_text(screen, fonts["small"], "C O L O R S", TEXT_DIM, (WIDTH // 2, 148))
+    draw_text(screen, fonts["small"], "C O L O R S", TEXT_DIM, (WIDTH // 2, 185))
 
-    # the three color slots
-    for key, label, x in SLOTS:
-        selected = key == menu.slot
-        points = diamond((x, SLOT_Y), SLOT_SIZE)
-        pygame.draw.polygon(screen, colors[key], points)
-        pygame.draw.polygon(screen, edge_for(colors[key]), points, 2)
-        if selected:
-            pygame.draw.polygon(screen, TEXT, diamond((x, SLOT_Y), SLOT_SIZE + 14, 45), 2)
-        draw_text(screen, fonts["tiny"], label, TEXT if selected else TEXT_DIM, (x, SLOT_Y + 58))
+    # one row of 4 colors for CLICK, one for AVOID
+    for slot, label, y in ROWS:
+        row_label = fonts["small"].render(label, True, TEXT)
+        screen.blit(row_label, row_label.get_rect(midleft=(170, y)))
+        taken = choice[other_slot(slot)]
 
-    # hue / saturation / brightness sliders for the selected slot
-    h, s, v = menu.hsv[menu.slot]
-    for i, ((name, max_value, unit), track) in enumerate(zip(SLIDERS, SLIDER_TRACKS)):
-        screen.blit(slider_gradient(i, h, s, v, track.size), track.topleft)
-        pygame.draw.rect(screen, LINE, track.inflate(4, 4), 2)
+        for name, x in zip(PALETTE, SWATCH_X):
+            color = PALETTE[name]
+            points = diamond((x, y), SWATCH_SIZE)
+            ring = diamond((x, y), SWATCH_SIZE + 14, 45)
 
-        value = menu.hsv[menu.slot][i]
-        knob_x = track.left + value / max_value * track.width
-        knob = diamond((knob_x, track.centery), 13)
-        pygame.draw.polygon(screen, colors[menu.slot], knob)
-        pygame.draw.polygon(screen, TEXT, knob, 2)
+            if name == taken:
+                # the other row is using this one: dimmed and crossed out, can't be picked
+                pygame.draw.polygon(screen, mix(MENU_BG, color, 0.25), points)
+                pygame.draw.line(screen, mix(MENU_BG, TEXT_DIM, 0.6), (x - 20, y + 20), (x + 20, y - 20), 3)
+                name_color = mix(MENU_BG, TEXT_DIM, 0.45)
+            elif name == choice[slot]:
+                pygame.draw.polygon(screen, color, points)
+                pygame.draw.polygon(screen, TEXT, ring, 2)
+                name_color = TEXT
+            else:
+                pygame.draw.polygon(screen, color, points)
+                if hovered == (slot, name):
+                    pygame.draw.polygon(screen, TEXT_DIM, ring, 1)
+                name_color = TEXT_DIM
 
-        label = fonts["tiny"].render(name, True, TEXT_DIM)
-        screen.blit(label, label.get_rect(midright=(track.left - 22, track.centery)))
-        amount = fonts["tiny"].render(f"{round(value)}{unit}", True, TEXT)
-        screen.blit(amount, amount.get_rect(midleft=(track.right + 22, track.centery)))
-
-    r, g, b = colors[menu.slot]
-    draw_text(screen, fonts["tiny"], f"#{r:02X}{g:02X}{b:02X}", TEXT_DIM, (WIDTH // 2, 500))
+            draw_text(screen, fonts["tiny"], name, name_color, (x, y + 52))
 
     # preview: click and avoid side by side on the standby color
     standby = colors["standby"]
@@ -553,7 +529,7 @@ def main():
         "tiny": pygame.font.Font(None, 24),
     }
     grid = make_grid()
-    load_colors()
+    load_choice()
     game = Game(time.perf_counter())
     menu = Menu()
 

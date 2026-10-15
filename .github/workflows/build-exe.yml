@@ -34,6 +34,7 @@ jobs:
 
           # The game is whatever single .py file is in the repo root,
           # so renaming it for a new version needs no changes here.
+          # Its name (without .py) also becomes the release title.
           sources = sorted(pathlib.Path(".").glob("*.py"))
           if len(sources) != 1:
               sys.exit(f"Expected exactly one .py file in the repo root, found: {[s.name for s in sources]}")
@@ -74,6 +75,7 @@ jobs:
           pathlib.Path("dist/SHA256SUMS.txt").write_text(f"{digest}  {exe.name}\n")
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write(f"sha256={digest}\n")
+              out.write(f"title={source.stem}\n")
           print(f"Built {exe} from '{source.name}' as version {label}, sha256 {digest}")
 
       - name: Sign the build provenance (attestation)
@@ -93,7 +95,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
-          name: Your True Reaction ${{ github.ref_name }}
+          name: ${{ steps.build.outputs.title }}
           files: |
             dist/YourTrueReaction.exe
             dist/SHA256SUMS.txt

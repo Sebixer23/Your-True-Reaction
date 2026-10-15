@@ -1,6 +1,6 @@
 # Lupi's Idea / Nana's Despair / Claude's finisher
 
-**Your True Reaction** is a reaction time test made with pygame. Click the CLICK color 5 times to get your average reaction time. Click the AVOID color, or click too early, and you start over. The cog in the top right corner lets you change the colors.
+**Your True Reaction** is a reaction time test made with pygame. Click the CLICK color 5 times to get your average reaction time. Click the AVOID color, or click too early, and you start over. The cog in the top right corner lets you pick the CLICK and AVOID colors: red, green, blue or yellow (they can't be the same).
 
 ## Download
 
