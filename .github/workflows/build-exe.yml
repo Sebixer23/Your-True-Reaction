@@ -1,0 +1,109 @@
+name: Build Windows exe
+
+# Runs when you push a tag (like 1.1 or 1.2), or by hand from the Actions tab
+on:
+  push:
+    tags: ["*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write       # lets the workflow create the release
+  id-token: write       # lets it sign the attestation
+  attestations: write   # lets it save the attestation to the repo
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install pygame and PyInstaller
+        run: python -m pip install pygame==2.6.1 pyinstaller==6.22.3
+
+      - name: Build the exe
+        id: build
+        shell: python
+        run: |
+          import hashlib, os, pathlib, re, subprocess, sys
+
+          # The game is whatever single .py file is in the repo root,
+          # so renaming it for a new version needs no changes here.
+          sources = sorted(pathlib.Path(".").glob("*.py"))
+          if len(sources) != 1:
+              sys.exit(f"Expected exactly one .py file in the repo root, found: {[s.name for s in sources]}")
+          source = sources[0]
+
+          # Version comes from the tag: 1.1 -> 1.1.0.0. Manual runs get 0.0.0.0.
+          tag = os.environ.get("GITHUB_REF_NAME", "") if os.environ.get("GITHUB_REF_TYPE") == "tag" else ""
+          numbers = [int(n) for n in re.findall(r"\d+", tag)][:4]
+          numbers += [0] * (4 - len(numbers))
+          version = tuple(numbers)
+          label = tag or "dev"
+
+          pathlib.Path("version.txt").write_text(f"""# UTF-8
+          VSVersionInfo(
+            ffi=FixedFileInfo(filevers={version}, prodvers={version}, mask=0x3f, flags=0x0,
+                              OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+            kids=[
+              StringFileInfo([StringTable('040904B0', [
+                StringStruct('CompanyName', 'Sebixer23'),
+                StringStruct('FileDescription', 'Your True Reaction'),
+                StringStruct('FileVersion', '{label}'),
+                StringStruct('InternalName', 'Your True Reaction'),
+                StringStruct('OriginalFilename', 'YourTrueReaction.exe'),
+                StringStruct('ProductName', 'Your True Reaction'),
+                StringStruct('ProductVersion', '{label}')])]),
+              VarFileInfo([VarStruct('Translation', [1033, 1200])])
+            ]
+          )
+          """, encoding="utf-8")
+
+          subprocess.run([sys.executable, "-m", "PyInstaller", "--onefile", "--windowed",
+                          "--name", "YourTrueReaction", "--icon", "icon.ico",
+                          "--version-file", "version.txt", "--exclude-module", "tkinter",
+                          str(source)], check=True)
+
+          exe = pathlib.Path("dist/YourTrueReaction.exe")
+          digest = hashlib.sha256(exe.read_bytes()).hexdigest()
+          pathlib.Path("dist/SHA256SUMS.txt").write_text(f"{digest}  {exe.name}\n")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"sha256={digest}\n")
+          print(f"Built {exe} from '{source.name}' as version {label}, sha256 {digest}")
+
+      - name: Sign the build provenance (attestation)
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/YourTrueReaction.exe
+
+      - name: Keep the exe as a workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: YourTrueReaction
+          path: |
+            dist/YourTrueReaction.exe
+            dist/SHA256SUMS.txt
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          name: Your True Reaction ${{ github.ref_name }}
+          files: |
+            dist/YourTrueReaction.exe
+            dist/SHA256SUMS.txt
+          body: |
+            Built automatically by GitHub Actions from the code at this tag, not on anyone's PC.
+            Build log: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            SHA-256: `${{ steps.build.outputs.sha256 }}`
+
+            Verify it was built by this repo (needs the GitHub CLI):
+            ```
+            gh attestation verify YourTrueReaction.exe -R ${{ github.repository }}
+            ```
