@@ -16,7 +16,6 @@ DIAMOND_SIZE = 230          # distance from the center to each tip of the big di
 COG_POS = (836, 64)         # the settings cog, top right corner
 
 CLICKS_NEEDED = 5           # correct clicks needed for one full run
-DECOY_CHANCE = 0.25         # same 1 in 4 odds as the old [4, 4, 4, 5] list
 WAIT_RANGE = (0.4, 3.9)     # seconds of "Wait..." before a color shows up
 DECOY_RANGE = (0.9, 1.5)    # how long the wrong color stays before it goes away
 HIT_SHOW_TIME = 0.7         # how long your ms stays on screen after a good click
@@ -107,6 +106,8 @@ class Game:
                          -> decoy -> (ignored) -> wait
                          -> decoy -> (clicked) -> fail
                wait -> (clicked too early)     -> fail
+
+    Every run has exactly one decoy, before one random round out of the 5.
     """
 
     def __init__(self, now):
@@ -116,6 +117,8 @@ class Game:
         self.go_start = None
         self.wait_time = 0
         self.decoy_time = 0
+        self.decoy_round = 0    # which round (0 to 4) gets the decoy this run
+        self.decoy_shown = False
         self.start_countdown(now)
 
     def set_state(self, state, now):
@@ -124,6 +127,8 @@ class Game:
 
     def start_countdown(self, now):
         self.times = []
+        self.decoy_round = random.randrange(CLICKS_NEEDED)   # 1 of the 5 rounds, picked fresh every run
+        self.decoy_shown = False
         self.set_state("countdown", now)
 
     def start_wait(self, now):
@@ -144,7 +149,9 @@ class Game:
             self.start_wait(now)
 
         elif self.state == "wait" and elapsed >= self.wait_time:
-            if random.random() < DECOY_CHANCE:
+            # the round number is how many hits you have so far (0 to 4)
+            if len(self.times) == self.decoy_round and not self.decoy_shown:
+                self.decoy_shown = True
                 self.decoy_time = random.uniform(*DECOY_RANGE)
                 self.set_state("decoy", now)
             else:
